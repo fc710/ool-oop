@@ -1,32 +1,31 @@
 %%%% -*- Mode : Prolog -*-
 
-% class/3 is a valid predicate and C is a class name
+%%% True if class/3 is a valid predicate and C is a class name
 is_class(C) :- current_predicate(class/3), class(C, _, _).
 
-% instance/3 is a valid predicate and I is a valid object
+%%% True if instance/3 is a valid predicate and I is a valid object
 is_instance(I):- current_predicate(instance/3), instance(I, _, _).
 
-%is_list_of_classes(List):
-% all elements in List are classes
-%is_list_of_classes([]).
-%is_list_of_classes([H | T]) :- is_class(H), is_list_of_classes(T).
-
+%%% True if 'method' is the functor of X
+%%% with 2 arguments (parameters and body)
 is_method(X) :- functor(X, method, 2).
 
-%pair_slots(L1, Res) : L1 is a list of pairs 
-%A = B (slot notation shown in examples); Res contains the prolog pair A-B
+%%% pair_slots(L, P)
+%%% collect the pairs in P
+%%% A = B -> A-B
 pair_slots([], []).
 pair_slots([H | T], [K-Y | R]) :-
     =(H, K = Y), atomic(K), pair_slots(T, R).
 
-%SK contains all slots keys in class C
+%%% SK contains all slots keys of class C
 slots_keys(C, SK) :-
     is_class(C),
     class(C, _, S),
     pairs_keys(S, SK).
 
-%append_if_key(R1, R2, R12)
-%adds in R12 the K-V pair from R1 if K key isn't in R2
+%%% append_if_key(R1, R2, R12)
+%%% adds in R12, the K-V pair from R1, if K key isn't in R2
+
 append_if_key([], R2, R2).
 append_if_key([K-_ | R1], R2, R12) :-
     member(K-_, R2),
@@ -51,8 +50,10 @@ superclass(Class, Result) :-
     append(F, Parents, F1),
     list_to_set(F1, Result).
 
-%split_slots_(Slots, Attrib, Methods): Split the Slots in Attrib
-%and Methods
+%%% Deleting this...
+%%% split_slots_(Slots, Attrib, Methods): Split the Slots
+%%%in Attrib and Methods
+
 split_slots([], [], []).
 split_slots([K-V | S], [K-V | A], M) :-
     \+ functor(V, method, _),
@@ -61,18 +62,30 @@ split_slots([K-V | S], A, [K-V | M]) :-
     functor(V, method, _),
     split_slots(S, A, M).
 
-%create_head(Name, G, Args, Result) : Result is the head of the
-%method 'Name'
-create_head(K, G, [], F) :-
-    var(G),
-    F =.. [K, G], !.
-create_head(K, B, A, F) :-
-    var(B),
-    F =.. [K, B | A].
-create_body(N, T, A, R) :-
+%%% create_head(Name, T, Args, Head)
+%%% Create the head of the method named
+%%% 'Name'. T is a free variable for 'this'
+
+create_head(K, T, [], F) :-
     var(T),
-    R = (getv(T, N, [A, X]),
+    F =.. [K, T], !.
+create_head(K, T, A, F) :-
+    var(T),
+    F =.. [K, T | A].
+
+%%% create_body(Name, T, Args, Body)
+%%% Create the body of the method named
+%%% 'Name'. T is a free variable for 'this
+
+create_body(N, T, A, B) :-
+    var(T),
+    B = (getv(T, N, [A, X]),
 	 call(X)).
+
+%%% build_method(Name, Args)
+%%% Create the method given a name and its args
+%%% and add it to the knowledge base if not already present
+
 build_method(N, A) :-
     create_head(N, T, A, H),
     create_body(N, T, A, B),
@@ -82,10 +95,11 @@ build_method(N, A) :-
     create_body(N, T, A, B),
     assert(H :- B).
 
-
-%process_methods(Methods, Instance, Result) : for each method in Methods
-% changes 'this' with Instance, adds method call in knowledge base, updates
-% slot pair and pass it to Result
+%%% Deleting this...
+%%% process_methods(Methods, Instance, Result)
+%%% For each method in Methods
+%%% changes 'this' with Instance, adds method call in knowledge base, updates
+%%% slot pair and pass it to Result
 process_methods([], _, []).
 process_methods([M | Ms], Instance, [K-[A, Cj] | Rs]) :-
     M = K-M1,
@@ -106,28 +120,40 @@ process_methods([M | Ms], Instance, [K-[A, Cj] | Rs]) :-
     build_method(K, A),
     process_methods(Ms, Instance, Rs).
 
+%%% process-slots.... new def
 
-%parents_slots_(Parents, Slots): Slots has all the slots from
-%Parents list
+process_slots([], _, []).
+process_slots([K-S | Ss], I, [K-S | Rs]) :-
+    \+ is_method(S), !,
+    process_slots(Ss, I, Rs).
+process_slots([K-M | Ss], I, [K-[A, Cj] | Rs]) :-
+    is_method(M),
+    M =.. [_, A, B],
+    replace(this, I, B, Cj),
+    build_method(K, A),
+    process_slots(Ss, I, Rs).
+
+%%% parents_slots_(Parents, Slots)
+%%% Slots has all the slots from Parents list
+
 parents_slots_([],[]).
 parents_slots_([H | T], Slots) :-
     class(H, _, S),
     parents_slots_(T, SP),
     append_if_key(S, SP, Slots).
 
-%all_slots(Class, Slots) : Slots is a list of all valid default slots
-%for Class
+%%% all_slots(Class, Slots)
+%%% Slots is a list of all valid default slots for Class
+
 all_slots(C, S) :-
     superclass(C, SC),
     reverse([C | SC], RS),
-    %class(C, _, S),
     parents_slots_(RS, S).
-    %append_if_key(SP, S, Slots).
 
-%def_class(Class, Parents, Slots) :
-%creates a class(Class, Parents, Slots) fact if Class isn't already a class,
-%Parents is a list of classes
-%Slots is a list  of pairs like A = B
+%%% def_class(Class, Parents, Slots)
+%%% Create a fact 'class(Class, Parents, Slots)' if Class isn't already a class,
+%%% Slots is a list elements like A = B
+
 def_class(Class, Parents, Slots) :-
     atomic(Class),
     \+ is_class(Class),
@@ -135,9 +161,10 @@ def_class(Class, Parents, Slots) :-
     pair_slots(Slots, Pairs),
     assert(class(Class, Parents, Pairs)).
 
-%new(Instance, Class, DSlots) :
-%if DSlots are valid slots for class 'Class', create an object 'Instance'
-%with all the appropriate slots inherited
+%%% new(Instance, Class, DSlots)
+%%% if DSlots are valid slots for class 'Class', create an object 'Instance'
+%%% with all the appropriate slots inherited
+
 new(Instance, Class, DSlots) :-
     atomic(Instance), is_class(Class),
     \+ is_instance(Instance),
@@ -147,29 +174,25 @@ new(Instance, Class, DSlots) :-
     subset(P, S),
     all_slots(Class, Cslots),
     append_if_key(Cslots, Pairs, Fslots),
-    split_slots(Fslots, Att, Methods),
-    process_methods(Methods, Instance, Fm),
-    append(Fm, Att, Final),
-    assert(instance(Instance, Class, Final)).
+    process_slots(Fslots, Instance, Ps),
+    %%split_slots(Fslots, Att, Methods),
+    %%process_methods(Methods, Instance, Fm),
+    %%append(Fm, Att, Final),
+    assert(instance(Instance, Class, Ps)).
 
-%new(Instance, Class):
+%%% new(Instance, Class):
+
 new(I, C) :-
     new(I, C, []).
-/*
-  atomic(Instance), is_class(Class),
-  \+ is_instance(Instance),
-  slots_all(Class, Slots),
-  split_slots(Slots, Att, Methods),
-  process_methods(Methods,Instance, Fm),
-  append(Fm, Att, Final),	
-  assert(instance(Instance, Class, Final)).
-*/
 
-%getv(Instance, Key, Value):
+%%% getv(Instance, Key, Value)
+
 getv(I, K, V) :-
     is_instance(I),
     instance(I, _, S),
     member(K-V,S), !.
+
+%%% getvx(Instance, Keys, Values)
 
 getvx(I, [K | []], V) :-
     is_instance(I),
@@ -180,6 +203,9 @@ getvx(I, [K | Ks], V) :-
     getv(I, K, V1),
     getvx(V1, Ks, V).
 
+%%% replace(Old, New, L, R)
+%%% Replace every occurence of Old in L
+%%% with New and store the result in R
 
 replace(S0, S, T0, S) :-
     T0 == S0, !.
