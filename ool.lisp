@@ -12,6 +12,24 @@
 (defun get-class-slot (class)
   (cdr (assoc :slots (get-class-spec class))))
 
+;;; True if class-name is in the hash-table *classes-specs*
+;;  If true, class-name is a valid class
+
+(defun classp (class-name)
+  (if (get-class-spec class-name)
+      t
+      nil))
+
+;;; True if every parent is in the hash-table *classes-specs*
+;; empty list (no parents) returns true
+
+(defun parentsp (parents)
+  (if (and (listp parents) 
+	   (or (null parents)
+	       (every #'get-class-spec parents)))
+      t
+      nil))
+
 ;;; Deterministic union where 
 ;;  elements shared are always taken from A
 ;;  (B - A) + A.
@@ -24,27 +42,24 @@
   (let ((b-a (set-difference b a :key key :test test)))
     (union b-a a :key key :test test)))
 
-;;; Accumulates all slots from parents in acc-slots
-
+;;; delete this
 (defun inherit-slots (acc-slots parents)
   (if (null parents)
       (values acc-slots)
       (let ((inh (get-class-slot (car parents))))
 	(inherit-slots (union-det acc-slots inh) (cdr parents)))))
 
+;;; Return a list of all default defined slots for 'class'
+
 (defun slot-inheritance (class)
+  ;; add class to the top of superclasses
+  ;; so class' slots are taken first
   (let ((class-ordered (cons class (superclass class))))
     (remove-duplicates
+     ;; slot accumulation
      (reduce #'append (mapcar #'get-class-slot class-ordered))
      :key #'first :test #'equal :from-end t)))
 
-;;; Returns an ordered list of superclasses of class
-(defun superclass (class)
-  ;; The list if reversed last for efficiency
-  ;; (cons vs append) in superclass--h
-  (reverse
-   (remove-duplicates
-    (superclasses--h (get-class-parents class)))))
 
 (defun superclasses--h (parents)
   (if (null parents)
@@ -52,19 +67,26 @@
       (append (superclasses--h (cdr parents))
 	      (superclass--h (car parents)))))
 
-;;; Experimental
-
-(defun superclasses--m (parents)
-  (mapcar #'superclass--h parents))
-
 (defun superclass--h (parent)
   (let ((grand-parent (get-class-parents parent)))
     (if (null grand-parent)
 	(list parent)
 	(cons parent (superclasses--h grand-parent)))))
 
-;;; Creates cons pair (slot-name . slot-value)
-;;  accumulates them in alist
+;;; Returns an ordered list of 'class' superclasses
+
+(defun superclass (class)
+  ;; The list is reversed last for efficiency
+  ;; (cons vs append) in superclass--h
+  (reverse
+   (remove-duplicates
+    (superclasses--h (get-class-parents class)))))
+
+
+
+;;; Creates cons pairs (slot-name . slot-value)
+;;  from a list of slots
+;;  Accumulate the pairs in 'alist'
 
 (defun pair-slots (slots alist)
   (if (null slots)
@@ -74,14 +96,10 @@
 			 (second slots)
 			 alist))))
 
-;;;(defun rewrite-method-code-1 (args method-spec)
-;;;  `(lambda ,(list 'this '&rest args)
-;;;     (progn ,method-spec)))
-
-
 ;;; rewrites method-spec as lambda function
-;;; adds "this"" as first argument
+;;; adds "this" as first argument
 ;;; lambda body contains every form in method-spec
+
 (defun rewrite-method-code (method-spec)
   `(lambda ,(cons 'this (second method-spec))
      ,(cons 'progn (cddr method-spec))))
@@ -102,52 +120,15 @@
 		       method-name)))))
   (eval (rewrite-method-code method-spec)))
 
+;;; Call process-method if slot is a method
+
 (defun process-slots (slots)
   (mapcar (lambda (slot)
-	    (if (or (atom (cdr slot))
-		    (not (eq '=> (cadr slot))))
-		slot
-		(cons (car slot) (process-method (car slot) (cdr slot)))))
+	    (if (and (consp (cdr slot))
+		     (eq '=> (cadr slot)))
+		(cons (car slot) (process-method (car slot) (cdr slot)))
+		slot))
 	  slots))
-
-;;; doesn't work
-;;;(defmacro process-method-2 (method-name args method-spec)
-;;;  `(defun ,method-name (this &rest ,args)
-;;;    (let ((method-instance (getv this ,method-name)))
-;;;       (if method-instance ;if getv returned nil throw error
-;;;	   (apply method-instance this ,args)
-;;;	   (error "Error: no method or slot named ~a found ~%"
-;;;		  ,method-name))))
-;;;  (rewrite-method-code-1 args method-spec))
-
-
-;;; Given a list of slots, returns a list without attribute slots
-;;  i.e the body is a form starting with '=>' (a method)
-
-(defun select-method (slots)
-  (remove-if #'(lambda (slot)
-		 (or (atom (cdr slot))
-		     (not (eq '=> (cadr slot)))))
-	     slots))
-
-;;; Check whether class-name is in the hash-table
-;;  if true, class-name is a valid class
-
-(defun classp (class-name)
-  (if (get-class-spec class-name)
-      t
-      nil))
-
-;;; Given a list of parents checks if every parent is
-;; in the table
-;; empty list is valid
-
-(defun parentsp (parents)
-  (if (and (listp parents) 
-	   (or (null parents)
-	       (every #'get-class-spec parents)))
-      t
-      nil))
 
 ;;; Association list to represent a class
 
@@ -161,9 +142,9 @@
   (pairlis '(:class :slots)
 	   `(,class-name ,slots)))
 
-;;; First verifies the syntax given is as required
-;; Then creates the appropriate assoc list
-;; Last it gets added to the table
+;;; Verify the parameters are valid
+;;  Create the appropriate assoc list
+;;  Add the list to the table
 
 (defun def-class (class-name parents &rest slot-value)
   (if (and
@@ -171,7 +152,7 @@
        (not (classp class-name)) ; class-name can't be an already valid class
        (parentsp parents)
        (evenp (list-length slot-value))) ; must be pairs (0 is valid)
-      (let ((class-spec (create-class-spec ; class-spec = assoc-list
+      (let ((class-spec (create-class-spec
 			 class-name
 			 parents
 			 (pair-slots slot-value '()))))
@@ -179,42 +160,24 @@
 	(values class-name))
       (error "Couldn't create class")))
 
+;;; Inherit all slots from superclasses
+;;  Integrate slots redefinition
+;;  Make method slots callable
 
 (defun new (class-name &rest slot-value)
   (if (classp class-name)
       (let* ((slot-args (pair-slots slot-value '())) ; slots redefined in new
-	     ;;(slot-class (get-class-slot class-name))
 	     ;;All valid slots for class
-	     ;;(slot-all (inherit-slots slot-class (superclass class-name)))
 	     (all-slots (slot-inheritance class-name)))
 	;; A - B = null if all slots of A are in B
+	;; no new slots can be defined
 	(if (null (set-difference
 		   slot-args all-slots :key #'first :test #'equal))
-	    ;; Integrate slots redefinition
 	    (let* ((slot-instance (union-det slot-args all-slots))
-		   ;; Separate methods and attributes
-		   ;;(methods (select-method slot-instance))
-		   ;;(attributes (set-difference slot-instance
-		   ;;			       methods
-		   ;;			       :key #'first :test #'equal))
-		   ;;make methods callable
-		   ;;  (proc-methods (mapcar (lambda (method)
-		   ;;			   (let ((name (car method))
-		   ;;(args (caddr method))
-		   ;; (body (cdr method)))
-		   ;;(pprint name)
-		   ;;(pprint args)
-		   ;;(pprint body)
-		   ;;			     (cons name
-		   ;;				   (process-method
-		   ;;				    name body))))
-		   ;;			 methods)))
-		   ;;returns the appropriate assoc list
 		   (processed-slots (process-slots slot-instance)))
 	      (values (create-instance-spec
 		       class-name
 		       processed-slots)))
-	    ;;(union attributes proc-methods))))
 	    (error "Error: Invalid slot/s specified")))
       (error "Error: Cannot instance object")))
 
@@ -224,10 +187,12 @@
   (let ((instance (if (symbolp instance)
 		      (eval instance)
 		      instance)))
+    ;; instance is an assoc list
     (if (and (listp instance)
 	     (classp (cdr (assoc :class instance))))
 	(let* ((slots (cdr (assoc :slots instance)))
 	       (value (cdr (assoc slot-name slots))))
+	  ;; might be a problem if the real value of a slot is nil
 	  (if (or (null slots) (null value))
 	      (error "Error: Invalid slot")
 	      value))
